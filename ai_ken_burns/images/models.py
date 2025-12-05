@@ -53,6 +53,12 @@ class ImageResult(BaseModel):
         description="Relevance to the visual marker"
     )
 
+    # AI generation
+    is_ai_generated: bool = Field(
+        default=False,
+        description="Whether image was AI-generated (DALL-E)"
+    )
+
     @property
     def aspect_ratio(self) -> Optional[float]:
         """Calculate aspect ratio."""
@@ -114,6 +120,11 @@ class ImageCollection(BaseModel):
     def downloaded_count(self) -> int:
         """Number of downloaded images."""
         return sum(1 for img in self.images if img.is_downloaded)
+
+    @property
+    def ai_generated_count(self) -> int:
+        """Number of AI-generated images."""
+        return sum(1 for img in self.images if img.is_ai_generated)
 
     @property
     def markers_covered(self) -> int:

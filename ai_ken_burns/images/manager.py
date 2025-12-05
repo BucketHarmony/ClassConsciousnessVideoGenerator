@@ -2,6 +2,7 @@
 Image manager for AI Ken Burns.
 
 Handles downloading, caching, and managing images for video generation.
+Includes AI image generation fallback using DALL-E.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from ai_ken_burns.config import get_config
 from ai_ken_burns.script.models import AnnotatedScript, VisualMarker
 from ai_ken_burns.images.models import ImageResult, ImageCollection
 from ai_ken_burns.images.searcher import ImageSearcher
+from ai_ken_burns.images.ai_generator import AIImageGenerator
 from ai_ken_burns.utils.logging_utils import get_logger, log_timing
 
 logger = get_logger("ai_ken_burns.images")
@@ -30,6 +32,7 @@ class ImageManager:
     Handles:
     - Searching for images based on visual markers
     - Downloading and caching images
+    - AI image generation as fallback (DALL-E)
     - Validating image dimensions
     - Creating image collections for video rendering
     """
@@ -39,6 +42,8 @@ class ImageManager:
         images_dir: Optional[Path] = None,
         min_width: int = 1280,
         min_height: int = 720,
+        use_ai_generation: bool = True,
+        ai_generation_only: bool = False,
     ) -> None:
         """
         Initialize the image manager.
@@ -47,6 +52,8 @@ class ImageManager:
             images_dir: Directory for storing images
             min_width: Minimum acceptable image width
             min_height: Minimum acceptable image height
+            use_ai_generation: Use DALL-E as fallback when search fails
+            ai_generation_only: Skip search and only use AI generation
         """
         self.config = get_config()
         self.images_dir = images_dir or Path(self.config.paths.images_dir)
@@ -54,14 +61,22 @@ class ImageManager:
 
         self.min_width = min_width
         self.min_height = min_height
+        self.use_ai_generation = use_ai_generation
+        self.ai_generation_only = ai_generation_only
 
         self.searcher = ImageSearcher()
+        self.ai_generator: Optional[AIImageGenerator] = None
         self.http_client = httpx.Client(timeout=60)
+
+        # Initialize AI generator if enabled
+        if use_ai_generation or ai_generation_only:
+            self.ai_generator = AIImageGenerator(output_dir=self.images_dir)
 
     def gather_images(
         self,
         script: AnnotatedScript,
         images_per_marker: int = 3,
+        historical_context: Optional[str] = None,
     ) -> ImageCollection:
         """
         Gather images for all visual markers in a script.
@@ -69,6 +84,7 @@ class ImageManager:
         Args:
             script: AnnotatedScript with visual markers
             images_per_marker: Number of images to find per marker
+            historical_context: Context for AI image generation
 
         Returns:
             ImageCollection with all images
@@ -89,7 +105,19 @@ class ImageManager:
         # Get all markers
         markers = script.all_markers
 
+        # Build historical context for AI generation if not provided
+        if historical_context is None:
+            historical_context = f"{script.title}. {script.thesis or ''}"
+
+        if self.ai_generation_only:
+            logger.info(f"Generating AI images for {len(markers)} markers...")
+            return self._gather_with_ai_only(
+                markers, project_dir, collection, historical_context
+            )
+
         logger.info(f"Searching images for {len(markers)} markers...")
+
+        markers_without_images = []
 
         for marker in markers:
             with log_timing(f"search_images_{marker.id}", logger):
@@ -100,6 +128,7 @@ class ImageManager:
 
             if not results:
                 logger.warning(f"No images found for marker [{marker.id}]")
+                markers_without_images.append(marker)
                 continue
 
             # Download best result
@@ -112,10 +141,66 @@ class ImageManager:
                 # Add remaining results without downloading yet
                 for result in results[1:]:
                     collection.images.append(result)
+            else:
+                # Download failed, add to AI generation list
+                markers_without_images.append(marker)
+
+        # Use AI generation for markers without images
+        if markers_without_images and self.use_ai_generation and self.ai_generator:
+            logger.info(
+                f"Generating AI images for {len(markers_without_images)} markers without images..."
+            )
+            for marker in markers_without_images:
+                with log_timing(f"ai_generate_{marker.id}", logger):
+                    ai_result = self.ai_generator.generate_for_marker(
+                        marker=marker,
+                        historical_context=historical_context,
+                        output_dir=project_dir,
+                    )
+
+                if ai_result:
+                    collection.add_image(ai_result, select_for_marker=True)
+                    logger.info(f"Generated AI image for [{marker.id}]")
+                else:
+                    logger.warning(f"AI generation failed for [{marker.id}]")
 
         logger.info(
             f"Image collection complete: {collection.downloaded_count}/{collection.image_count} downloaded, "
+            f"{collection.ai_generated_count} AI-generated, "
             f"{collection.markers_covered} markers covered"
+        )
+
+        return collection
+
+    def _gather_with_ai_only(
+        self,
+        markers: list[VisualMarker],
+        project_dir: Path,
+        collection: ImageCollection,
+        historical_context: str,
+    ) -> ImageCollection:
+        """Gather images using only AI generation."""
+        if not self.ai_generator:
+            logger.error("AI generator not initialized")
+            return collection
+
+        for marker in markers:
+            with log_timing(f"ai_generate_{marker.id}", logger):
+                ai_result = self.ai_generator.generate_for_marker(
+                    marker=marker,
+                    historical_context=historical_context,
+                    output_dir=project_dir,
+                )
+
+            if ai_result:
+                collection.add_image(ai_result, select_for_marker=True)
+                logger.info(f"Generated AI image for [{marker.id}]")
+            else:
+                logger.warning(f"AI generation failed for [{marker.id}]")
+
+        logger.info(
+            f"AI image collection complete: {collection.ai_generated_count} generated, "
+            f"{collection.markers_covered}/{len(markers)} markers covered"
         )
 
         return collection

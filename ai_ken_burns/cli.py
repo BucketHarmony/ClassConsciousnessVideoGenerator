@@ -118,6 +118,17 @@ def generate(
         max=1.0,
         help="Minimum relevance score for news stories (0-1)",
     ),
+    # AI Image generation options
+    ai_images: bool = typer.Option(
+        True,
+        "--ai-images/--no-ai-images",
+        help="Use DALL-E to generate images when search fails",
+    ),
+    ai_images_only: bool = typer.Option(
+        False,
+        "--ai-images-only",
+        help="Use only AI-generated images (skip image search)",
+    ),
     # Artifact options
     save_artifacts: bool = typer.Option(
         True,
@@ -263,14 +274,24 @@ def generate(
 
     # Stage 4: Images
     print_info("\n[Stage 4/6] Gathering images...")
-    img_manager = ImageManager()
+    img_manager = ImageManager(
+        use_ai_generation=ai_images,
+        ai_generation_only=ai_images_only,
+    )
+
+    # Build historical context for AI generation
+    historical_context = f"{research.historical_event.name}. {research.thesis}"
 
     if images_dir:
         # Use provided local images
         images = img_manager.use_local_images(script, images_dir)
     else:
-        # Search for images online
-        images = img_manager.gather_images(script, images_per_marker=3)
+        # Search for images online (with AI fallback if enabled)
+        images = img_manager.gather_images(
+            script,
+            images_per_marker=3,
+            historical_context=historical_context,
+        )
 
     img_manager.close()
 
@@ -278,7 +299,12 @@ def generate(
         print_error("No images found for any markers")
         raise typer.Exit(1)
 
-    print_success(f"Gathered {images.downloaded_count} images for {images.markers_covered} markers")
+    ai_count = images.ai_generated_count
+    search_count = images.downloaded_count - ai_count
+    if ai_count > 0:
+        print_success(f"Gathered {search_count} searched + {ai_count} AI-generated images for {images.markers_covered} markers")
+    else:
+        print_success(f"Gathered {images.downloaded_count} images for {images.markers_covered} markers")
 
     if save_artifacts:
         images_metadata = config.paths.images_dir / f"images_{timestamp}.json"

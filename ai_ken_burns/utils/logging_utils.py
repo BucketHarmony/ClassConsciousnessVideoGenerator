@@ -90,6 +90,11 @@ def get_video_logger() -> logging.Logger:
     return get_logger("ai_ken_burns.video")
 
 
+def get_images_logger() -> logging.Logger:
+    """Logger for image pipeline."""
+    return get_logger("ai_ken_burns.images")
+
+
 def get_api_logger() -> logging.Logger:
     """Logger for API calls (OpenAI, etc.)."""
     return get_logger("ai_ken_burns.api")
