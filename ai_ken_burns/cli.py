@@ -135,6 +135,18 @@ def generate(
         "--save-artifacts/--no-save-artifacts",
         help="Save intermediate JSON files for debugging",
     ),
+    # Publishing options
+    publish: bool = typer.Option(
+        False,
+        "--publish",
+        "-p",
+        help="Publish video to TikTok after generation",
+    ),
+    publish_headless: bool = typer.Option(
+        True,
+        "--publish-headless/--publish-visible",
+        help="Run browser in headless mode for publishing",
+    ),
     # Logging
     verbose: bool = typer.Option(
         False,
@@ -346,6 +358,26 @@ def generate(
     console.print(f"\n[bold green]Output:[/bold green] {output}")
     console.print(f"Duration: {audio.total_duration:.1f}s")
     console.print(f"Resolution: {video_resolution[0]}x{video_resolution[1]} @ {fps}fps")
+
+    # Stage 7: Publish to TikTok (optional)
+    if publish:
+        print_info("\n[Stage 7/7] Publishing to TikTok...")
+        from ai_ken_burns.publish.tiktok import publish_to_tiktok, export_cookies_instructions
+
+        result = publish_to_tiktok(
+            video_path=output,
+            title=script.title,
+            thesis=research.thesis,
+            headless=publish_headless,
+        )
+
+        if result.success:
+            print_success("Video published to TikTok!")
+        else:
+            print_error(f"TikTok upload failed: {result.error}")
+            if "cookies" in result.error.lower():
+                console.print("\n[yellow]Cookie Setup Instructions:[/yellow]")
+                console.print(export_cookies_instructions())
 
     log_timing_summary()
     raise typer.Exit(0)
@@ -1106,6 +1138,118 @@ def validate() -> None:
     else:
         print_success("All validations passed!")
         raise typer.Exit(0)
+
+
+@app.command("publish")
+def publish_video(
+    video_file: Path = typer.Argument(
+        ...,
+        exists=True,
+        readable=True,
+        help="Video file to publish",
+    ),
+    description: str = typer.Option(
+        ...,
+        "--description",
+        "-d",
+        help="Video description/caption",
+    ),
+    hashtags: Optional[str] = typer.Option(
+        None,
+        "--hashtags",
+        help="Comma-separated hashtags (without #)",
+    ),
+    cookies: Optional[Path] = typer.Option(
+        None,
+        "--cookies",
+        "-c",
+        exists=True,
+        help="Path to TikTok cookies file",
+    ),
+    headless: bool = typer.Option(
+        True,
+        "--headless/--visible",
+        help="Run browser in headless mode",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose output",
+    ),
+) -> None:
+    """
+    Publish a video to TikTok.
+
+    Requires TikTok cookies exported from your browser.
+
+    Examples:
+
+        ai-ken-burns publish video.mp4 -d "My documentary"
+
+        ai-ken-burns publish video.mp4 -d "History lesson" --hashtags "history,labor"
+
+        ai-ken-burns publish video.mp4 -d "Test" --visible  # Show browser
+    """
+    print_banner()
+
+    if verbose:
+        set_log_level("DEBUG")
+    else:
+        set_log_level("INFO")
+
+    from ai_ken_burns.publish.tiktok import TikTokPublisher, export_cookies_instructions
+
+    # Parse hashtags
+    hashtag_list = None
+    if hashtags:
+        hashtag_list = [h.strip() for h in hashtags.split(",") if h.strip()]
+
+    print_info(f"Publishing: {video_file.name}")
+    print_info(f"Description: {description[:50]}...")
+    if hashtag_list:
+        print_info(f"Hashtags: {', '.join(hashtag_list)}")
+
+    publisher = TikTokPublisher(cookies_path=cookies, headless=headless)
+
+    # Validate cookies first
+    if not publisher.validate_cookies():
+        print_error("Invalid or missing TikTok cookies file")
+        console.print("\n[yellow]Setup Instructions:[/yellow]")
+        console.print(export_cookies_instructions())
+        raise typer.Exit(1)
+
+    result = publisher.publish(
+        video_path=video_file,
+        description=description,
+        hashtags=hashtag_list,
+    )
+
+    if result.success:
+        print_success("Video published to TikTok successfully!")
+        raise typer.Exit(0)
+    else:
+        print_error(f"Upload failed: {result.error}")
+        raise typer.Exit(1)
+
+
+@app.command("tiktok-setup")
+def tiktok_setup() -> None:
+    """Show instructions for setting up TikTok publishing."""
+    print_banner()
+
+    from ai_ken_burns.publish.tiktok import export_cookies_instructions, TikTokPublisher
+
+    console.print("[bold]TikTok Publishing Setup[/bold]\n")
+
+    # Check current status
+    publisher = TikTokPublisher()
+    if publisher.validate_cookies():
+        print_success(f"TikTok cookies found: {publisher.cookies_path}")
+        console.print("You're ready to publish videos!")
+    else:
+        print_warning("TikTok cookies not configured")
+        console.print(export_cookies_instructions())
 
 
 def main() -> None:

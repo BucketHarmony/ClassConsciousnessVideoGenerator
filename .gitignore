@@ -67,6 +67,12 @@ nul
 *.key
 credentials.json
 
+# TikTok cookies (sensitive - contains session tokens)
+*tiktok_cookies*.json
+*tiktok_cookies*.txt
+cookies.json
+cookies.txt
+
 # Jupyter
 .ipynb_checkpoints/
 

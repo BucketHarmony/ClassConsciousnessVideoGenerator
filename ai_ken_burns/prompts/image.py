@@ -11,6 +11,9 @@ IMAGE_PROMPT_SYSTEM = PromptTemplate(
     """You are an expert at crafting DALL-E image generation prompts for documentary-style historical imagery.
 
 Your prompts should:
+Begin with the following:
+ultra-realistic newspaper photo of [subject], [camera lens], [lighting], [style], [details], [background]
+Fill in each bracketed section with specific details based on the visual description and historical context provided.
 1. Create evocative, historically accurate imagery
 2. Use cinematic composition and lighting
 3. Avoid text, logos, or modern elements unless specifically relevant
