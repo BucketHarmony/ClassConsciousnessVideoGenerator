@@ -16,8 +16,20 @@ from ai_ken_burns.config import get_config
 from ai_ken_burns.script.models import VisualMarker
 from ai_ken_burns.images.models import ImageResult
 from ai_ken_burns.utils.logging_utils import get_images_logger, log_timing
+from ai_ken_burns.prompts.image import (
+    IMAGE_PROMPT_SYSTEM,
+    IMAGE_PROMPT_USER,
+    VISUAL_TYPE_STYLES,
+    MOTION_STYLE_HINTS,
+    get_style_hints,
+)
 
 logger = get_images_logger()
+
+# DALL-E size options
+DALLE_SIZE_LANDSCAPE = "1792x1024"  # 16:9-ish landscape
+DALLE_SIZE_PORTRAIT = "1024x1792"   # 9:16 portrait (TikTok/Reels/Shorts)
+DALLE_SIZE_SQUARE = "1024x1024"     # Square
 
 
 class AIImageGenerator:
@@ -32,9 +44,10 @@ class AIImageGenerator:
         self,
         output_dir: Optional[Path] = None,
         model: str = "dall-e-3",
-        size: str = "1792x1024",
+        size: Optional[str] = None,
         quality: str = "standard",
         style: str = "natural",
+        is_vertical: bool = False,
     ) -> None:
         """
         Initialize the AI image generator.
@@ -42,17 +55,28 @@ class AIImageGenerator:
         Args:
             output_dir: Directory to save generated images
             model: DALL-E model to use
-            size: Image size (1792x1024 for landscape, 1024x1792 for portrait)
+            size: Image size (auto-detected if None based on is_vertical)
             quality: Image quality (standard or hd)
             style: Image style (natural or vivid)
+            is_vertical: If True, generate vertical/portrait images for TikTok/Reels
         """
         self.config = get_config()
         self.client = get_openai_client()
         self.output_dir = output_dir or Path(self.config.paths.images_dir)
         self.model = model
-        self.size = size
         self.quality = quality
         self.style = style
+        self.is_vertical = is_vertical
+
+        # Auto-detect size based on orientation
+        if size:
+            self.size = size
+        elif is_vertical:
+            self.size = DALLE_SIZE_PORTRAIT
+        else:
+            self.size = DALLE_SIZE_LANDSCAPE
+
+        logger.info(f"AI Image Generator initialized: size={self.size}, vertical={is_vertical}")
 
     def generate_for_marker(
         self,
@@ -82,31 +106,14 @@ class AIImageGenerator:
         if marker.search_terms:
             visual_description += f". Key elements: {', '.join(marker.search_terms[:3])}"
 
-        # Add era and location if available
-        style_hints = []
-        if marker.era:
-            style_hints.append(f"{marker.era} era")
-        if marker.location:
-            style_hints.append(f"set in {marker.location}")
-        if marker.mood:
-            style_hints.append(f"{marker.mood} mood")
-
-        # Map visual type to style hints
-        visual_type_hints = {
-            "historical_photo": "vintage photograph, sepia or black and white, archival quality",
-            "archival_footage": "historical documentary still, film grain, period authentic",
-            "illustration": "detailed illustration, documentary style, historically accurate",
-            "map": "historical map, vintage cartography, period-appropriate style",
-            "portrait": "formal portrait, period-appropriate clothing and setting",
-            "scene_recreation": "cinematic recreation, dramatic lighting, documentary quality",
-            "symbolic": "symbolic imagery, metaphorical, artistic documentary style",
-            "modern_footage": "modern documentary photography, journalistic style",
-        }
-
-        type_hint = visual_type_hints.get(marker.visual_type.value, "documentary photography")
-        style_hints.append(type_hint)
-
-        style_str = ", ".join(style_hints) if style_hints else None
+        # Get style hints using prompts module helper
+        style_str = get_style_hints(
+            visual_type=marker.visual_type.value,
+            motion=marker.motion.value if marker.motion else "slow_zoom_in",
+            era=marker.era,
+            location=marker.location,
+            mood=marker.mood,
+        )
 
         # Generate optimized prompt using GPT-4
         with log_timing(f"generate_prompt_{marker.id}", logger):
@@ -205,6 +212,7 @@ def generate_ai_image(
     marker: VisualMarker,
     historical_context: str,
     output_dir: Path,
+    is_vertical: bool = False,
 ) -> Optional[ImageResult]:
     """
     Convenience function to generate a single AI image.
@@ -213,9 +221,10 @@ def generate_ai_image(
         marker: VisualMarker to generate image for
         historical_context: Historical context
         output_dir: Output directory
+        is_vertical: If True, generate vertical images for TikTok/Reels
 
     Returns:
         ImageResult or None if failed
     """
-    generator = AIImageGenerator(output_dir=output_dir)
+    generator = AIImageGenerator(output_dir=output_dir, is_vertical=is_vertical)
     return generator.generate_for_marker(marker, historical_context, output_dir)

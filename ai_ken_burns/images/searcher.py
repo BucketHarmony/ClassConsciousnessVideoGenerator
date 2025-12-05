@@ -2,8 +2,8 @@
 Image searcher for AI Ken Burns.
 
 Searches for images based on visual markers using various sources:
-- Wikimedia Commons (free historical images)
-- Library of Congress (historical photos)
+- Google Images (via scraping for fair use news images)
+- Wikimedia Commons (fallback for historical images)
 - Placeholder generation for testing
 """
 
@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import re
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 
@@ -29,15 +29,37 @@ class ImageSearcher:
     Searches for images matching visual markers.
 
     Supports multiple image sources with fallback:
-    1. Wikimedia Commons - Free historical images
-    2. Library of Congress - US historical photos
+    1. Google Images - News and current images (fair use)
+    2. Wikimedia Commons - Free historical images
     3. Placeholder - Generated placeholders for testing
     """
+
+    # News sites for fair use
+    NEWS_DOMAINS = [
+        "reuters.com",
+        "apnews.com",
+        "nytimes.com",
+        "washingtonpost.com",
+        "theguardian.com",
+        "bbc.com",
+        "cnn.com",
+        "npr.org",
+        "pbs.org",
+        "abcnews.go.com",
+        "nbcnews.com",
+        "cbsnews.com",
+    ]
 
     def __init__(self) -> None:
         """Initialize the image searcher."""
         self.config = get_config()
-        self.http_client = httpx.Client(timeout=30)
+        self.http_client = httpx.Client(
+            timeout=30,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+            follow_redirects=True,
+        )
 
     def search_for_marker(
         self,
@@ -61,15 +83,15 @@ class ImageSearcher:
         # Build search query from marker
         search_terms = marker.search_terms or [marker.description]
 
-        # Try Wikimedia Commons first
-        wiki_results = self._search_wikimedia(search_terms, marker, max_results)
-        results.extend(wiki_results)
+        # Try Google Images first
+        google_results = self._search_google_images(search_terms, marker, max_results)
+        results.extend(google_results)
 
-        # If not enough results, try Library of Congress
+        # If not enough results, try Wikimedia Commons
         if len(results) < max_results:
             remaining = max_results - len(results)
-            loc_results = self._search_loc(search_terms, marker, remaining)
-            results.extend(loc_results)
+            wiki_results = self._search_wikimedia(search_terms, marker, remaining)
+            results.extend(wiki_results)
 
         # If still not enough, add placeholders
         if len(results) < 1:
@@ -78,6 +100,98 @@ class ImageSearcher:
 
         logger.info(f"Found {len(results)} images for [{marker.id}]")
         return results
+
+    def _search_google_images(
+        self,
+        search_terms: list[str],
+        marker: VisualMarker,
+        max_results: int,
+    ) -> list[ImageResult]:
+        """Search Google Images for news/current images."""
+        results = []
+
+        for term in search_terms[:2]:  # Limit to first 2 terms
+            try:
+                # Google Images search URL
+                query = quote_plus(f"{term} news photo")
+                url = f"https://www.google.com/search?q={query}&tbm=isch&tbs=isz:l"
+
+                response = self.http_client.get(url)
+                response.raise_for_status()
+                html = response.text
+
+                # Extract image URLs from the response
+                # Look for data-src or src in img tags
+                image_urls = self._extract_google_images(html)
+
+                for img_url in image_urls[:max_results]:
+                    if not img_url or len(img_url) < 20:
+                        continue
+
+                    # Check if from news site (for fair use)
+                    is_news_source = any(
+                        domain in img_url.lower()
+                        for domain in self.NEWS_DOMAINS
+                    )
+
+                    result = ImageResult(
+                        id=self._generate_id(img_url),
+                        marker_id=marker.id,
+                        source_url=img_url,
+                        source_name="Google Images" + (" (News)" if is_news_source else ""),
+                        title=term,
+                        description=marker.description,
+                        era=marker.era,
+                        relevance_score=0.8 if is_news_source else 0.6,
+                    )
+                    results.append(result)
+
+                    if len(results) >= max_results:
+                        break
+
+            except Exception as e:
+                logger.debug(f"Google Images search error for '{term}': {e}")
+
+            if len(results) >= max_results:
+                break
+
+        return results[:max_results]
+
+    def _extract_google_images(self, html: str) -> list[str]:
+        """Extract image URLs from Google Images HTML."""
+        urls = []
+
+        # Pattern for image URLs in Google's response
+        # Google uses various patterns for embedding image data
+        patterns = [
+            r'https?://[^\s"\'<>]+\.(?:jpg|jpeg|png|gif|webp)',
+            r'"ou":"(https?://[^"]+)"',  # Original URL in JSON
+            r'data-src="(https?://[^"]+)"',
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, html, re.IGNORECASE)
+            for match in matches:
+                url = match if isinstance(match, str) else match
+                # Filter out google's own URLs and small thumbnails
+                if (
+                    url
+                    and "google" not in url.lower()
+                    and "gstatic" not in url.lower()
+                    and "encrypted-tbn" not in url
+                    and len(url) > 30
+                ):
+                    urls.append(url)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+
+        return unique_urls[:20]  # Limit results
 
     def _search_wikimedia(
         self,
@@ -164,59 +278,6 @@ class ImageSearcher:
             logger.debug(f"Error getting image info for {title}: {e}")
 
         return None
-
-    def _search_loc(
-        self,
-        search_terms: list[str],
-        marker: VisualMarker,
-        max_results: int,
-    ) -> list[ImageResult]:
-        """Search Library of Congress for images."""
-        results = []
-
-        for term in search_terms[:2]:
-            try:
-                query = quote_plus(term)
-                url = (
-                    f"https://www.loc.gov/pictures/search/?"
-                    f"q={query}&fo=json&c={max_results}"
-                )
-
-                response = self.http_client.get(url)
-                response.raise_for_status()
-                data = response.json()
-
-                for item in data.get("results", []):
-                    image_url = item.get("image", {}).get("full")
-                    if not image_url:
-                        # Try medium size
-                        image_url = item.get("image", {}).get("medium")
-                    if not image_url:
-                        continue
-
-                    result = ImageResult(
-                        id=self._generate_id(image_url),
-                        marker_id=marker.id,
-                        source_url=image_url,
-                        source_name="Library of Congress",
-                        title=item.get("title", ""),
-                        description=item.get("description", [""])[0] if item.get("description") else "",
-                        date=item.get("date"),
-                        era=marker.era,
-                        relevance_score=0.6,
-                    )
-                    results.append(result)
-
-                    if len(results) >= max_results:
-                        break
-
-            except Exception as e:
-                logger.debug(f"LoC search error for '{term}': {e}")
-
-            if len(results) >= max_results:
-                break
-
-        return results[:max_results]
 
     def _create_placeholder(self, marker: VisualMarker) -> ImageResult:
         """Create a placeholder image result for testing."""

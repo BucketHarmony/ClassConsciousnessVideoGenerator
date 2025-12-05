@@ -239,3 +239,46 @@ def parse_resolution(resolution_str: str) -> tuple[int, int]:
         return (width, height)
     except ValueError as e:
         raise ValueError(f"Invalid resolution '{resolution_str}': {e}")
+
+
+# Preset resolutions for common formats
+RESOLUTION_PRESETS = {
+    # Landscape formats
+    "1080p": (1920, 1080),
+    "720p": (1280, 720),
+    "4k": (3840, 2160),
+
+    # TikTok/Reels/Shorts vertical formats (9:16 aspect ratio)
+    "tiktok": (1080, 1920),
+    "reels": (1080, 1920),
+    "shorts": (1080, 1920),
+    "vertical": (1080, 1920),
+    "9:16": (1080, 1920),
+
+    # Square format (1:1 aspect ratio)
+    "square": (1080, 1080),
+    "1:1": (1080, 1080),
+
+    # Standard horizontal formats
+    "16:9": (1920, 1080),
+    "landscape": (1920, 1080),
+}
+
+
+def get_resolution(resolution_str: str) -> tuple[int, int]:
+    """
+    Get resolution from string (preset name or WxH format).
+
+    Args:
+        resolution_str: Preset name (e.g., 'tiktok') or WxH (e.g., '1080x1920')
+
+    Returns:
+        Tuple of (width, height)
+    """
+    # Check if it's a preset
+    preset_key = resolution_str.lower().strip()
+    if preset_key in RESOLUTION_PRESETS:
+        return RESOLUTION_PRESETS[preset_key]
+
+    # Otherwise parse as WxH
+    return parse_resolution(resolution_str)

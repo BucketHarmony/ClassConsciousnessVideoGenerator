@@ -21,57 +21,14 @@ from ai_ken_burns.script.models import (
     MotionSuggestion,
 )
 from ai_ken_burns.utils.logging_utils import get_script_logger, log_timing
+from ai_ken_burns.prompts.script import (
+    SCRIPT_GENERATION_SYSTEM,
+    SCRIPT_GENERATION_USER,
+    SCRIPT_RESPONSE_SCHEMA,
+    SEARCH_TERMS_ENHANCEMENT,
+)
 
 logger = get_script_logger()
-
-# System prompt for script generation
-SYSTEM_PROMPT = """You are a documentary scriptwriter specializing in connecting current events to historical class struggles.
-
-Your task is to write compelling narration scripts that:
-1. Open with today's news story
-2. Transition to the historical parallel
-3. Draw meaningful connections between past and present
-4. End with insight or call to reflection
-
-IMPORTANT: Embed visual markers in your script using [v1], [v2], etc. format.
-Each marker indicates where a new image should appear in the video.
-
-Guidelines for visual markers:
-- Place markers at natural transition points
-- Each marker should have 5-15 seconds of narration
-- Use markers to highlight key moments, people, and events
-- Suggest what type of image should appear
-
-Your response must be valid JSON with the structure specified."""
-
-# Response schema for script generation
-RESPONSE_SCHEMA = """
-{
-  "title": "string - compelling title for the video",
-  "segments": [
-    {
-      "id": 1,
-      "text": "string - narration text with [v1], [v2] markers embedded",
-      "mood": "string - emotional tone (somber, hopeful, urgent, contemplative)",
-      "pacing": "string - slow, normal, or fast",
-      "visual_markers": [
-        {
-          "id": "v1",
-          "description": "what the visual should show",
-          "search_terms": ["term1", "term2", "term3"],
-          "visual_type": "historical_photo|historical_artwork|news_image|portrait|scene|map",
-          "mood": "somber|hopeful|urgent|contemplative|neutral",
-          "motion": "slow_zoom_in|slow_zoom_out|pan_left|pan_right|static",
-          "era": "optional era like '1930s' or 'Victorian'",
-          "location": "optional location"
-        }
-      ]
-    }
-  ],
-  "tone": "overall tone",
-  "style": "documentary style used"
-}
-"""
 
 
 class ScriptGenerator:
@@ -93,31 +50,20 @@ class ScriptGenerator:
         style: str,
         target_duration: int,
     ) -> str:
-        """Build the prompt for script generation."""
+        """Build the prompt for script generation using prompts module."""
         # Calculate target word count (roughly 150 words per minute)
         target_words = int((target_duration / 60) * 150)
         marker_count = max(3, target_duration // 10)  # One marker per ~10 seconds
 
-        return f"""Write a documentary narration script connecting this news story to its historical parallel.
-
-{research.to_prompt_context()}
-
-REQUIREMENTS:
-- Target duration: approximately {target_duration} seconds ({target_words} words)
-- Include {marker_count}-{marker_count + 3} visual markers [v1], [v2], etc.
-- Style: {style}
-- Structure: 3-5 segments (intro, news context, historical parallel, connection, conclusion)
-
-VISUAL MARKER PLACEMENT:
-- Place [v1] near the opening to show contemporary context
-- Place markers at each major transition
-- Include markers for key historical figures and events
-- End with a reflective visual
-
-The script should flow naturally when read aloud. Make it compelling and thought-provoking.
-
-Respond with a JSON object following this schema:
-{RESPONSE_SCHEMA}"""
+        return SCRIPT_GENERATION_USER.format(
+            research_context=research.to_prompt_context(),
+            target_duration=target_duration,
+            target_words=target_words,
+            marker_count_min=marker_count,
+            marker_count_max=marker_count + 3,
+            style=style,
+            response_schema=SCRIPT_RESPONSE_SCHEMA,
+        )
 
     def generate(
         self,
@@ -144,7 +90,7 @@ Respond with a JSON object following this schema:
         prompt = self._build_prompt(research, style, target_duration)
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": str(SCRIPT_GENERATION_SYSTEM)},
             {"role": "user", "content": prompt},
         ]
 
@@ -257,15 +203,13 @@ Respond with a JSON object following this schema:
         return script
 
     def _generate_search_terms(self, marker: VisualMarker) -> list[str]:
-        """Generate additional search terms for a marker."""
-        prompt = f"""Generate 5 specific image search terms for this visual:
-
-Description: {marker.description}
-Type: {marker.visual_type.value}
-Era: {marker.era or 'not specified'}
-Location: {marker.location or 'not specified'}
-
-Return only a JSON array of search terms, e.g.: ["term1", "term2", "term3", "term4", "term5"]"""
+        """Generate additional search terms for a marker using prompts module."""
+        prompt = SEARCH_TERMS_ENHANCEMENT.format(
+            description=marker.description,
+            visual_type=marker.visual_type.value,
+            era=marker.era or 'not specified',
+            location=marker.location or 'not specified',
+        )
 
         response = self.client.chat_completion_json(
             messages=[{"role": "user", "content": prompt}],

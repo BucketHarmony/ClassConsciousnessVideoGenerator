@@ -211,9 +211,11 @@ class VideoRenderer:
         audio_path: str,
         output_path: Path,
     ) -> bool:
-        """Add audio track to video."""
+        """Add audio track to video, ensuring full audio plays."""
         logger.debug(f"Adding audio: {audio_path}")
 
+        # Don't use -shortest - we want full audio duration
+        # If video is shorter than audio, the last frame will be held
         args = [
             "-y",
             "-i", str(video_path),
@@ -222,7 +224,6 @@ class VideoRenderer:
             "-c:a", self.config.video.audio_codec,
             "-map", "0:v:0",
             "-map", "1:a:0",
-            "-shortest",
             str(output_path),
         ]
 

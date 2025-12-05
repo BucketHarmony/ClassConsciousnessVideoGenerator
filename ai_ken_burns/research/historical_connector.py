@@ -8,65 +8,20 @@ connecting them to class struggle and labor history.
 from __future__ import annotations
 
 import json
+import random
 from typing import Optional
 
 from ai_ken_burns.clients.openai_client import get_openai_client, APIResponse
 from ai_ken_burns.config import get_config
 from ai_ken_burns.utils.logging_utils import get_research_logger, log_timing
 from ai_ken_burns.research.models import NewsStory, HistoricalEvent, ResearchOutput
+from ai_ken_burns.prompts.research import (
+    HISTORICAL_CONNECTION_SYSTEM,
+    HISTORICAL_CONNECTION_USER,
+    HISTORICAL_CONNECTION_SCHEMA,
+)
 
 logger = get_research_logger()
-
-# System prompt for historical connection
-SYSTEM_PROMPT = """You are a historian specializing in labor history, class struggle, and social movements.
-Your task is to find compelling historical parallels that illuminate the class dynamics of current events.
-
-When analyzing a news story:
-1. Identify the core class dynamics at play (workers vs capital, community vs corporations, etc.)
-2. Find a specific historical event that parallels these dynamics
-3. Focus on events from labor history, social movements, or class struggle
-4. Explain why this historical parallel is illuminating and relevant
-
-Preferred historical periods and movements:
-- Industrial Revolution labor struggles (1800s)
-- Progressive Era reforms (1890s-1920s)
-- Great Depression and New Deal (1930s)
-- Civil Rights Movement (1950s-1960s)
-- Labor movements worldwide
-- Anti-colonial and independence movements
-- Housing and tenant rights movements
-- Environmental justice movements
-
-Always provide specific, verifiable historical events with dates and locations.
-"""
-
-# JSON schema for LLM response
-RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "historical_event": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Name of the historical event"},
-                "year": {"type": "integer", "description": "Year the event occurred"},
-                "year_range": {"type": "string", "description": "Year range if spans multiple years"},
-                "location": {"type": "string", "description": "Where the event took place"},
-                "summary": {"type": "string", "description": "Brief summary of the event (2-3 sentences)"},
-                "significance": {"type": "string", "description": "Why this event matters for class consciousness"},
-                "connection_rationale": {"type": "string", "description": "How this connects to the current news story"},
-                "parallel_themes": {"type": "array", "items": {"type": "string"}, "description": "Themes shared with current story"},
-                "key_figures": {"type": "array", "items": {"type": "string"}, "description": "Important people involved"},
-                "key_facts": {"type": "array", "items": {"type": "string"}, "description": "Important facts to mention"},
-                "suggested_imagery": {"type": "array", "items": {"type": "string"}, "description": "Historical images to search for"}
-            },
-            "required": ["name", "summary", "connection_rationale"]
-        },
-        "thesis": {"type": "string", "description": "Central thesis connecting news to history"},
-        "narrative_angle": {"type": "string", "description": "Suggested narrative approach"},
-        "confidence_score": {"type": "number", "description": "Confidence in the connection (0-1)"}
-    },
-    "required": ["historical_event", "thesis", "narrative_angle", "confidence_score"]
-}
 
 
 class HistoricalConnector:
@@ -83,35 +38,17 @@ class HistoricalConnector:
         self.client = get_openai_client()
 
     def _build_prompt(self, story: NewsStory) -> str:
-        """Build the prompt for the LLM."""
+        """Build the prompt for the LLM using the prompts module."""
         themes_str = ", ".join(story.themes) if story.themes else "general class consciousness"
         keywords_str = ", ".join(story.relevance_keywords[:5]) if story.relevance_keywords else ""
 
-        return f"""Analyze this current news story and find a compelling historical parallel from labor history or class struggle:
-
-NEWS STORY:
-Title: {story.title}
-
-Summary: {story.summary}
-
-Source: {story.source}
-Identified Themes: {themes_str}
-Key Topics: {keywords_str}
-
-Find a specific historical event that:
-1. Has similar class dynamics or power structures
-2. Shows how ordinary people organized or responded
-3. Provides lessons or context for understanding today's situation
-4. Has compelling visual history (for documentary footage/images)
-
-Respond with a JSON object containing the historical event details, thesis statement,
-narrative angle, and confidence score (0-1).
-
-Focus on events that are:
-- Specific and verifiable (not vague movements)
-- Have visual documentation available
-- Show worker/community agency and resistance
-- Provide hope or lessons for today"""
+        return HISTORICAL_CONNECTION_USER.format(
+            title=story.title,
+            summary=story.summary,
+            source=story.source,
+            themes=themes_str,
+            keywords=keywords_str,
+        )
 
     def find_connection(
         self,
@@ -133,7 +70,7 @@ Focus on events that are:
         prompt = self._build_prompt(story)
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": str(HISTORICAL_CONNECTION_SYSTEM)},
             {"role": "user", "content": prompt},
         ]
 
@@ -200,15 +137,17 @@ Focus on events that are:
         self,
         stories: list[NewsStory],
         topic: Optional[str] = None,
+        randomize: bool = True,
     ) -> Optional[ResearchOutput]:
         """
         Find the best historical connection from multiple stories.
 
-        Tries each story and returns the one with highest confidence.
+        Tries stories (optionally randomized) and returns the first high-confidence match.
 
         Args:
             stories: List of news stories to analyze
             topic: Optional topic for context
+            randomize: If True, shuffle stories to get variety (default: True)
 
         Returns:
             Best ResearchOutput, or None if all failed
@@ -216,6 +155,12 @@ Focus on events that are:
         if not stories:
             logger.warning("No stories provided for historical connection")
             return None
+
+        # Shuffle stories for variety if randomize is enabled
+        if randomize:
+            stories = stories.copy()
+            random.shuffle(stories)
+            logger.info(f"Randomized story order for variety")
 
         best_output: Optional[ResearchOutput] = None
 

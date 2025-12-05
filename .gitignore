@@ -40,6 +40,7 @@ ENV/
 htmlcov/
 .tox/
 .nox/
+.benchmarks/
 
 # Generated artifacts
 artifacts/
@@ -57,6 +58,7 @@ tmp/
 # OS files
 .DS_Store
 Thumbs.db
+nul
 
 # Secrets
 .env.local
@@ -71,7 +73,11 @@ credentials.json
 # External tools/downloads
 nats-server*/
 *.zip
-nul
 
 # Other projects
 agent-chat-mcp/
+
+# Planning/Requirements docs (keep in separate branch if needed)
+Requirements/
+PLAN-*.md
+ROADMAP.md

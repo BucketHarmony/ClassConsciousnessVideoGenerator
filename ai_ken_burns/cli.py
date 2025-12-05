@@ -94,7 +94,7 @@ def generate(
         "1920x1080",
         "--resolution",
         "-r",
-        help="Video resolution (WIDTHxHEIGHT)",
+        help="Video resolution: preset (tiktok, reels, 1080p, 4k, square) or WxH",
     ),
     fps: int = typer.Option(
         30,
@@ -182,15 +182,19 @@ def generate(
     config = get_config()
     config.save_artifacts = save_artifacts
 
-    # Parse resolution
+    # Parse resolution (supports presets like 'tiktok' or WxH format)
+    from ai_ken_burns.config import get_resolution
     try:
-        video_resolution = parse_resolution(resolution)
+        video_resolution = get_resolution(resolution)
         config.video.resolution = video_resolution
         config.video.fps = fps
         config.ken_burns.intensity = ken_burns_intensity
     except ValueError as e:
         print_error(f"Invalid resolution: {e}")
         raise typer.Exit(1)
+
+    # Determine if vertical (for DALL-E image size)
+    is_vertical = video_resolution[1] > video_resolution[0]
 
     # Set default output path
     if output is None:
@@ -256,6 +260,10 @@ def generate(
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(script.model_dump_json(indent=2))
 
+        # Also save script next to output video for convenience
+        output_script_path = output.parent / f"{output.stem}_script.json"
+        output_script_path.write_text(script.model_dump_json(indent=2))
+
     # Stage 3: Audio
     print_info("\n[Stage 3/6] Generating audio...")
     audio_dir = config.paths.audio_dir / f"audio_{timestamp}"
@@ -277,6 +285,7 @@ def generate(
     img_manager = ImageManager(
         use_ai_generation=ai_images,
         ai_generation_only=ai_images_only,
+        is_vertical=is_vertical,
     )
 
     # Build historical context for AI generation

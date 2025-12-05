@@ -44,6 +44,7 @@ class ImageManager:
         min_height: int = 720,
         use_ai_generation: bool = True,
         ai_generation_only: bool = False,
+        is_vertical: bool = False,
     ) -> None:
         """
         Initialize the image manager.
@@ -54,6 +55,7 @@ class ImageManager:
             min_height: Minimum acceptable image height
             use_ai_generation: Use DALL-E as fallback when search fails
             ai_generation_only: Skip search and only use AI generation
+            is_vertical: If True, generate vertical images for TikTok/Reels
         """
         self.config = get_config()
         self.images_dir = images_dir or Path(self.config.paths.images_dir)
@@ -63,6 +65,7 @@ class ImageManager:
         self.min_height = min_height
         self.use_ai_generation = use_ai_generation
         self.ai_generation_only = ai_generation_only
+        self.is_vertical = is_vertical
 
         self.searcher = ImageSearcher()
         self.ai_generator: Optional[AIImageGenerator] = None
@@ -70,7 +73,10 @@ class ImageManager:
 
         # Initialize AI generator if enabled
         if use_ai_generation or ai_generation_only:
-            self.ai_generator = AIImageGenerator(output_dir=self.images_dir)
+            self.ai_generator = AIImageGenerator(
+                output_dir=self.images_dir,
+                is_vertical=is_vertical,
+            )
 
     def gather_images(
         self,

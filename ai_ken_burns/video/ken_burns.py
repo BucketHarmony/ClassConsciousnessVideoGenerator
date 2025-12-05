@@ -96,6 +96,11 @@ class KenBurnsEngine:
         """
         Create a complete render specification.
 
+        Ensures video duration matches full audio duration by:
+        1. Using marker timing from audio for segments with images
+        2. Redistributing time from missing markers to available ones
+        3. Extending the last segment to cover remaining audio time
+
         Args:
             script: AnnotatedScript with visual markers
             audio: AudioOutput with timing information
@@ -123,23 +128,36 @@ class KenBurnsEngine:
 
         # Get markers in order
         markers = script.all_markers
-        marker_ids = [m.id for m in markers]
 
-        # Create segments
-        for i, marker in enumerate(markers):
-            # Get timing from audio
-            timing = audio.marker_times.get(marker.id)
-            if not timing:
-                logger.warning(f"No timing for marker [{marker.id}], skipping")
-                continue
-
-            start_time, end_time = timing
-
-            # Get image
+        # First pass: identify which markers have images
+        available_markers = []
+        for marker in markers:
             image = images.get_image_for_marker(marker.id)
-            if not image or not image.local_path:
-                logger.warning(f"No image for marker [{marker.id}], skipping")
-                continue
+            if image and image.local_path:
+                available_markers.append((marker, image))
+            else:
+                logger.warning(f"No image for marker [{marker.id}], will redistribute time")
+
+        if not available_markers:
+            logger.error("No markers with images available")
+            return spec
+
+        # Calculate total duration to cover
+        total_audio_duration = audio.total_duration
+
+        # Distribute duration evenly among available markers
+        # This ensures we cover the full audio duration
+        segment_duration = total_audio_duration / len(available_markers)
+
+        # Create segments with proper timing
+        current_time = 0.0
+        for i, (marker, image) in enumerate(available_markers):
+            # Calculate segment end time
+            if i == len(available_markers) - 1:
+                # Last segment extends to the end of audio
+                end_time = total_audio_duration
+            else:
+                end_time = current_time + segment_duration
 
             # Generate motion
             motion = self._generate_motion(marker, self.intensity)
@@ -150,14 +168,18 @@ class KenBurnsEngine:
                 image_path=image.local_path,
                 image_width=image.width,
                 image_height=image.height,
-                start_time=start_time,
+                start_time=current_time,
                 end_time=end_time,
                 motion=motion,
             )
 
             spec.segments.append(segment)
+            current_time = end_time
 
-        logger.info(f"Render spec created: {spec.segment_count} segments")
+        logger.info(
+            f"Render spec created: {spec.segment_count} segments, "
+            f"total duration: {total_audio_duration:.1f}s"
+        )
 
         return spec
 
