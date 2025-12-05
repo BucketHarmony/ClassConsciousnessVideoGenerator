@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "agent-chat": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "E:/AI/MultiverseOne/agent-chat-mcp",
+        "python",
+        "-m",
+        "agent_chat.server"
+      ],
+      "env": {
+        "NATS_URL": "nats://localhost:4222"
+      }
+    }
+  }
+}
