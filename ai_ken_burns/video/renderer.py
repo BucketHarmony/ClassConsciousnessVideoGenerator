@@ -159,10 +159,15 @@ class VideoRenderer:
             f"format=yuv420p"
         )
 
-        args = [
-            "-y",
-            "-loop", "1",
-            "-i", segment.image_path,
+        # Build args - skip -loop for GIFs (not supported)
+        image_path = segment.image_path
+        is_gif = image_path.lower().endswith('.gif')
+
+        args = ["-y"]
+        if not is_gif:
+            args.extend(["-loop", "1"])
+        args.extend([
+            "-i", image_path,
             "-t", str(segment.duration),
             "-vf", filter_complex,
             "-c:v", self.config.video.video_codec,
@@ -170,7 +175,7 @@ class VideoRenderer:
             "-crf", "23",
             "-an",  # No audio for segments
             str(output_path),
-        ]
+        ])
 
         success, error = run_ffmpeg(args, timeout=300)
 
