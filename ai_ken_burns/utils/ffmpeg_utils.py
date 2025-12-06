@@ -127,43 +127,80 @@ def generate_zoompan_filter(
     y_start: float = 0.5,
     x_end: float = 0.5,
     y_end: float = 0.5,
+    pan_ratio: float = 1.0,
 ) -> str:
     """
     Generate FFmpeg zoompan filter string for Ken Burns effect.
+
+    The zoompan filter crops a region from the source image.
+    - zoom: determines crop size (zoom=2 means visible region is 1/2 of source)
+    - x/y: top-left corner of the crop region in source pixel coordinates
+
+    The input image is scaled so the shorter side fits the output exactly.
+    For example, a 1920x1080 image on a 1080x1080 output:
+    - Height fits exactly (1080)
+    - Width is scaled proportionally (1920)
+    - pan_ratio = 1920/1080 = 1.78
+
+    We set zoom = pan_ratio so the visible region equals the output size,
+    leaving (pan_ratio - 1) * output_size pixels for panning.
 
     Args:
         width: Output video width
         height: Output video height
         duration_seconds: Duration of the clip in seconds
         fps: Frames per second
-        zoom_start: Starting zoom level (1.0 = original size)
+        zoom_start: Starting zoom level (1.0 = fit to screen, >1.0 = zoom in)
         zoom_end: Ending zoom level
-        x_start: Starting X position (0-1, normalized)
-        y_start: Starting Y position (0-1, normalized)
+        x_start: Starting X position (0-1, normalized, 0=left, 1=right)
+        y_start: Starting Y position (0-1, normalized, 0=top, 1=bottom)
         x_end: Ending X position (0-1, normalized)
         y_end: Ending Y position (0-1, normalized)
+        pan_ratio: Ratio of scaled image size to output size (e.g., 1.78 for 16:9 on square)
 
     Returns:
         FFmpeg filter string for zoompan
     """
     total_frames = int(duration_seconds * fps)
+    if total_frames <= 0:
+        total_frames = 1
+
+    # Base zoom equals pan_ratio so visible region = output size
+    # This means at zoom=pan_ratio, the entire output is filled with no black bars
+    # and we have (pan_ratio - 1) * dimension pixels to pan across
+    BASE_ZOOM = max(pan_ratio, 1.0)
+
+    # Apply additional zoom on top of base
+    # zoom_start=1.0 means no extra zoom (just pan)
+    # zoom_start=1.5 means 1.5x zoom in addition to fitting
+    ffmpeg_zoom_start = BASE_ZOOM * zoom_start
+    ffmpeg_zoom_end = BASE_ZOOM * zoom_end
 
     # Calculate zoom progression per frame
-    zoom_delta = (zoom_end - zoom_start) / total_frames if total_frames > 0 else 0
+    zoom_delta = (ffmpeg_zoom_end - ffmpeg_zoom_start) / total_frames
 
-    # Calculate position progression
-    # Position is relative to zoomed image
-    x_delta = (x_end - x_start) / total_frames if total_frames > 0 else 0
-    y_delta = (y_end - y_start) / total_frames if total_frames > 0 else 0
+    # Build the zoom expression
+    zoom_expr = f"{ffmpeg_zoom_start}+{zoom_delta}*on"
 
-    # Build filter expression
-    # zoom: starts at zoom_start, increases by zoom_delta each frame
-    zoom_expr = f"min({zoom_start}+{zoom_delta}*on,{max(zoom_start, zoom_end)})"
+    # For x/y positioning:
+    # The visible region size = iw/zoom
+    # The pan range = iw - iw/zoom = iw * (1 - 1/zoom)
+    # x position = pan_range * normalized_position
+    #
+    # At zoom=pan_ratio (e.g., 1.78), pan_range = iw * (1 - 1/1.78) = iw * 0.44
+    # For a 1920px wide image, that's ~844px of pan range
 
-    # x/y: position calculation based on zoom and normalized coordinates
-    # x = (iw - iw/zoom) * x_position
-    x_expr = f"(iw-iw/zoom)*({x_start}+{x_delta}*on)"
-    y_expr = f"(ih-ih/zoom)*({y_start}+{y_delta}*on)"
+    # Calculate normalized position progression
+    x_delta = (x_end - x_start) / total_frames
+    y_delta = (y_end - y_start) / total_frames
+
+    # Current normalized position at frame 'on'
+    x_norm = f"({x_start}+{x_delta}*on)"
+    y_norm = f"({y_start}+{y_delta}*on)"
+
+    # x/y in pixels, based on current zoom level
+    x_expr = f"(iw-iw/zoom)*{x_norm}"
+    y_expr = f"(ih-ih/zoom)*{y_norm}"
 
     filter_str = (
         f"zoompan=z='{zoom_expr}':"

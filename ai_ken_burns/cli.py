@@ -91,7 +91,7 @@ def generate(
     ),
     # Video options
     resolution: str = typer.Option(
-        "1920x1080",
+        "square",
         "--resolution",
         "-r",
         help="Video resolution: preset (tiktok, reels, 1080p, 4k, square) or WxH",

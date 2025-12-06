@@ -112,10 +112,31 @@ class VideoRenderer:
     ) -> bool:
         """Render a single segment with Ken Burns effect."""
         logger.debug(f"Rendering segment [{segment.id}]: {segment.duration:.1f}s")
+        logger.debug(f"Motion: {segment.motion.pattern} zoom={segment.motion.zoom_start:.2f}->{segment.motion.zoom_end:.2f}")
+        logger.debug(f"Pan: x={segment.motion.x_start:.2f}->{segment.motion.x_end:.2f}, y={segment.motion.y_start:.2f}->{segment.motion.y_end:.2f}")
 
         output_path = temp_dir / f"segment_{segment.order:03d}.mp4"
 
-        # Generate zoompan filter
+        # Determine scaling strategy based on image vs video aspect ratio
+        img_w = segment.image_width or spec.width
+        img_h = segment.image_height or spec.height
+        img_aspect = img_w / img_h
+        video_aspect = spec.width / spec.height
+
+        # Scale so shorter side fits video, longer side extends for panning
+        if img_aspect > video_aspect:
+            # Image is wider - fit height, pan horizontally
+            scale_filter = f"scale=-1:{spec.height}"
+            # Calculate how much wider the scaled image is
+            scaled_width = int(spec.height * img_aspect)
+            pan_ratio = scaled_width / spec.width  # e.g., 1.78 for 16:9 on square
+        else:
+            # Image is taller - fit width, pan vertically
+            scale_filter = f"scale={spec.width}:-1"
+            scaled_height = int(spec.width / img_aspect)
+            pan_ratio = scaled_height / spec.height
+
+        # Generate zoompan filter with the actual pan ratio
         zoompan_filter = generate_zoompan_filter(
             width=spec.width,
             height=spec.height,
@@ -127,18 +148,12 @@ class VideoRenderer:
             y_start=segment.motion.y_start,
             x_end=segment.motion.x_end,
             y_end=segment.motion.y_end,
+            pan_ratio=pan_ratio,
         )
 
-        # Build FFmpeg command
-        # Scale image to exactly 2x target dimensions for zoom headroom
-        # Force scale to exact dimensions (ignoring aspect ratio - zoompan will handle it)
-        target_width = spec.width * 2
-        target_height = spec.height * 2
-
-        # Scale to exact dimensions needed for zoompan
+        # Build filter: scale to fit shorter side, then zoompan for motion
         filter_complex = (
-            f"scale={target_width}:{target_height}:force_original_aspect_ratio=increase,"
-            f"crop={target_width}:{target_height},"
+            f"{scale_filter},"
             f"setsar=1,"
             f"{zoompan_filter},"
             f"format=yuv420p"
@@ -157,7 +172,7 @@ class VideoRenderer:
             str(output_path),
         ]
 
-        success, error = run_ffmpeg(args, timeout=120)
+        success, error = run_ffmpeg(args, timeout=300)
 
         if success:
             segment.temp_video_path = str(output_path)

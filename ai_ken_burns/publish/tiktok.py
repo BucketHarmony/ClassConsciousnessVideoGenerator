@@ -78,13 +78,19 @@ class TikTokPublisher:
             if path.exists():
                 return path
 
-        # Check common locations
+        # Check common locations (both .json and .txt formats)
         search_paths = [
             Path.home() / ".tiktok_cookies.json",
             Path.home() / "tiktok_cookies.json",
+            Path.home() / "tiktok_cookies.txt",
+            Path.cwd() / ".tiktok_cookies.json",
             Path.cwd() / "tiktok_cookies.json",
+            Path.cwd() / "tiktok_cookies.txt",
             Path.cwd() / "cookies.json",
+            Path.cwd() / "cookies.txt",
+            self.config.paths.base_dir / ".tiktok_cookies.json",
             self.config.paths.base_dir / "tiktok_cookies.json",
+            self.config.paths.base_dir / "tiktok_cookies.txt",
         ]
 
         for path in search_paths:
@@ -139,16 +145,49 @@ class TikTokPublisher:
 
         try:
             from tiktok_uploader.upload import upload_video
-            from tiktok_uploader.auth import AuthBackend
+
+            # Read cookies and determine format
+            cookies_arg = None
+            cookies_list_arg = None
+
+            with open(self.cookies_path) as f:
+                content = f.read().strip()
+
+            # If it's a semicolon-separated string, parse it into a list
+            if not content.startswith('[') and not content.startswith('#') and "sessionid=" in content:
+                # Parse cookie string into list format
+                cookies_list_arg = []
+                for pair in content.split(";"):
+                    if "=" in pair:
+                        name, value = pair.split("=", 1)
+                        cookies_list_arg.append({
+                            "name": name.strip(),
+                            "value": value.strip(),
+                            "domain": ".tiktok.com",
+                            "path": "/"
+                        })
+                logger.info(f"Parsed {len(cookies_list_arg)} cookies from string format")
+            else:
+                # Use file path for JSON or Netscape format
+                cookies_arg = str(self.cookies_path)
 
             # Upload the video
-            upload_video(
-                filename=str(video_path),
-                description=full_description,
-                cookies=str(self.cookies_path),
-                headless=self.headless,
-                schedule_time=schedule_time,
-            )
+            if cookies_list_arg:
+                upload_video(
+                    filename=str(video_path),
+                    description=full_description,
+                    cookies_list=cookies_list_arg,
+                    headless=self.headless,
+                    schedule_time=schedule_time,
+                )
+            else:
+                upload_video(
+                    filename=str(video_path),
+                    description=full_description,
+                    cookies=cookies_arg,
+                    headless=self.headless,
+                    schedule_time=schedule_time,
+                )
 
             logger.info("TikTok upload successful!")
 
@@ -174,12 +213,23 @@ class TikTokPublisher:
 
         try:
             with open(self.cookies_path) as f:
-                data = json.load(f)
+                content = f.read().strip()
 
-            # Check for required cookie (sessionid)
-            if isinstance(data, list):
-                cookie_names = [c.get("name") for c in data]
-                return "sessionid" in cookie_names
+            # Try JSON format first
+            if content.startswith('[') or content.startswith('{'):
+                data = json.loads(content)
+                if isinstance(data, list):
+                    cookie_names = [c.get("name") for c in data]
+                    return "sessionid" in cookie_names
+                return False
+
+            # Check for Netscape cookies.txt format
+            if content.startswith("# Netscape") or content.startswith("# HTTP"):
+                return "sessionid" in content
+
+            # Check for semicolon-separated cookie string format
+            if "sessionid=" in content:
+                return True
 
             return False
 
